@@ -1,0 +1,13 @@
+{
+  "name": "supabase-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Supabase 中转代理 (零依赖), 用于在无法直连 Supabase 的网络环境下做反向代理",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
