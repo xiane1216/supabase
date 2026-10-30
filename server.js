@@ -23,9 +23,38 @@
 
 const http = require('http');
 const https = require('https');
+const dns = require('dns');
 const { URL } = require('url');
 
 const PORT = Number(process.env.PORT || 8080);
+
+// ---------- DNS 缓存 ----------
+// 集群 DNS 空闲后第一查容易超时 (EAI_AGAIN), 导致空闲后第一条请求失败。
+// 这里把解析结果缓存 DNS_TTL_MS 毫秒 (默认 5 分钟), 期间新建连接不再查 DNS。
+// 上游 IP 变化时最多在 TTL 过期后自动更新, 风险可忽略。
+const _dnsLookup = dns.lookup.bind(dns);
+const dnsCache = new Map(); // "hostname|family" -> { result, all, exp }
+const DNS_TTL_MS = Number(process.env.DNS_TTL_MS || 5 * 60 * 1000);
+
+dns.lookup = function (hostname, options, callback) {
+  if (typeof options === 'function') { callback = options; options = {}; }
+  const all = !!options.all;
+  const family = options.family || 0;
+  const key = `${hostname}|${family}`;
+  const now = Date.now();
+  const hit = dnsCache.get(key);
+  if (hit && hit.exp > now) {
+    process.nextTick(() => (all ? callback(null, hit.result) : callback(null, hit.addr, hit.fam)));
+    return;
+  }
+  _dnsLookup(hostname, options, (err, ...args) => {
+    if (!err) {
+      dnsCache.set(key, all ? { result: args[0], all: true, exp: now + DNS_TTL_MS }
+                            : { addr: args[0], fam: args[1], exp: now + DNS_TTL_MS });
+    }
+    callback(err, ...args);
+  });
+};
 
 // ---------- 解析环境变量 ----------
 
@@ -194,6 +223,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`[supabase-proxy] 监听端口 ${PORT}`);
+  console.log(`[supabase-proxy] DNS 缓存: 开启, TTL ${DNS_TTL_MS / 1000}s`);
   console.log(`[supabase-proxy] 目标列表: ${[...targets.entries()].map(([a, u]) => `${a} -> ${u}`).join(', ') || '(空!)'}`);
   console.log(`[supabase-proxy] 默认目标: ${defaultTargetKey || '(未配置)'}`);
 });
